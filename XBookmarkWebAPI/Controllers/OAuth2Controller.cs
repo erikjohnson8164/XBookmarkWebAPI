@@ -17,6 +17,7 @@ namespace OAuth2PKCE
         private static readonly string ClientId = "azNIWGxOcC1nTFlqWjU0U2k0Vkw6MTpjaQ"; // Replace with your Client ID
         private static readonly string RedirectUri = "https://localhost:7235/api/Auth/callback"; // Replace with your Redirect URI
         private static readonly string UserId = "YOUR_X_USER_ID"; // Replace with your X account user ID
+        private static readonly string ClientSecret = "CI_xvIXmUbaLUWXOjSHgZMsOKjGhlpBRf-11OU9g5CVrJilhuD";
         private static string CodeVerifier; // Store temporarily (in memory for simplicity)
         private static string ExpectedState; // Store temporarily for state verification
 
@@ -34,7 +35,7 @@ namespace OAuth2PKCE
             CodeVerifier = codeVerifier; // Store for later use in token exchange
 
             // Define scopes (bookmark.read for accessing bookmarks)
-            string[] scopes = { "bookmark.read" }; // Add more scopes if needed, e.g., "users.read"
+            string[] scopes = { "tweet.read users.read bookmark.read" }; // Add more scopes if needed, e.g., "users.read"
             string scope = string.Join(" ", scopes);
 
             // Construct the authorize URL
@@ -70,7 +71,15 @@ namespace OAuth2PKCE
             {
                 return BadRequest(new { error = "token_exchange_failed", message = ex.Message });
             }
-
+            string userId;
+            try
+            {
+                userId = await GetUserIdAsync(accessToken);
+            }
+            catch (HttpRequestException ex)
+            {
+                return BadRequest(new { error = "getIdFailed", message = ex.Message });
+            }
             // Get bookmarks
             string bookmarks;
             try
@@ -152,11 +161,17 @@ namespace OAuth2PKCE
         }
 
         // Exchange authorization code for access token
+
         private async Task<string> ExchangeCodeForTokenAsync(string code, string codeVerifier, string clientId)
         {
             using var httpClient = new HttpClient();
             var tokenUrl = "https://api.x.com/2/oauth2/token";
 
+            // Add Basic Authentication header
+            var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{ClientSecret}"));
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+
+            // Prepare request body (do not include client_secret here)
             var content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 { "client_id", clientId },
@@ -166,12 +181,47 @@ namespace OAuth2PKCE
                 { "code_verifier", codeVerifier }
             });
 
+            // Log request details for debugging
+            Console.WriteLine($"Token request - ClientId: {clientId}, Code: {code}, RedirectUri: {RedirectUri}, CodeVerifier: {codeVerifier}");
+
             var response = await httpClient.PostAsync(tokenUrl, content);
-            response.EnsureSuccessStatusCode();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException(
+                    $"Token exchange failed: {(int)response.StatusCode} ({response.ReasonPhrase}). Response: {errorContent}");
+            }
 
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             return json.GetProperty("access_token").GetString();
         }
+        //private async Task<string> ExchangeCodeForTokenAsync(string code, string codeVerifier, string clientId)
+        //{
+        //    using var httpClient = new HttpClient();
+        //    var tokenUrl = "https://api.x.com/2/oauth2/token";
+
+        //    var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        //    {
+        //        { "client_id", clientId },
+        //        { "client_secret", ClientSecret },
+        //        { "grant_type", "authorization_code" },
+        //        { "code", code },
+        //        { "redirect_uri", RedirectUri },
+        //        { "code_verifier", codeVerifier }
+        //    });
+
+        //    var response = await httpClient.PostAsync(tokenUrl, content);
+        //    if (!response.IsSuccessStatusCode)
+        //    {
+        //        var errorContent = await response.Content.ReadAsStringAsync();
+        //        throw new HttpRequestException(
+        //            $"Token exchange failed: {(int)response.StatusCode} ({response.ReasonPhrase}). Response: {errorContent}");
+        //    }
+
+        //    var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        //    return json.GetProperty("access_token").GetString();
+        //}
 
         // Retrieve bookmarks using the access token
         private async Task<string> GetBookmarksAsync(string accessToken, string userId)
@@ -179,11 +229,28 @@ namespace OAuth2PKCE
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-            var bookmarksUrl = $"https://api.x.com/2/users/{userId}/bookmarks";
+            var bookmarksUrl = $"https://api.x.com/2/users/1620545947641188352/bookmarks";
             var response = await httpClient.GetAsync(bookmarksUrl);
             response.EnsureSuccessStatusCode();
 
             return await response.Content.ReadAsStringAsync();
+        }
+
+        private async Task<string> GetUserIdAsync(string accessToken)
+        {
+            using var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            var response = await httpClient.GetAsync("https://api.x.com/2/users/me");
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException($"Failed to get user ID: {response.StatusCode}, {errorContent}");
+            }
+            var json = await response.Content.ReadAsStringAsync();
+            var data = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json);
+            var userId = data["data"]["id"];
+            Console.WriteLine($"User ID: {userId} (permanent for account erikj3102)");
+            return userId;
         }
     }
 }
