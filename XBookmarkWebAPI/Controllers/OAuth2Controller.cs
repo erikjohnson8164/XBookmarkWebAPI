@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -35,11 +36,16 @@ namespace OAuth2PKCE
             CodeVerifier = codeVerifier; // Store for later use in token exchange
 
             // Define scopes (bookmark.read for accessing bookmarks)
-            string[] scopes = { "tweet.read users.read bookmark.read" }; // Add more scopes if needed, e.g., "users.read"
-            string scope = string.Join(" ", scopes);
+            string[] scopes = { "tweet.read", "users.read", "bookmark.read" };
+            string scope = string.Join(" ", scopes); // Results in "tweet.read users.read bookmark.read"
+            Console.WriteLine($"Raw scope: {scope}"); // Debug: Should be "tweet.read users.read bookmark.read"
+
+            string encodedScope = Uri.EscapeDataString(scope); // Encodes spaces to %20: "tweet.read%20users.read%20bookmark.read"
+            Console.WriteLine($"Encoded scope: {encodedScope}"); // Debug: Should be "tweet.read%20users.read%20bookmark.read"
 
             // Construct the authorize URL
-            string authorizeUrl = ConstructAuthorizeUrl(ClientId, RedirectUri, scope, state, codeChallenge, "S256");
+            string authorizeUrl = ConstructAuthorizeUrl(ClientId, RedirectUri, encodedScope, state, codeChallenge, "S256");
+            Console.WriteLine($"Final URL: {authorizeUrl}");
 
             // Return the authorize URL and code verifier
             return Ok(new { authUrl = authorizeUrl, codeVerifier });
@@ -229,7 +235,12 @@ namespace OAuth2PKCE
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-            var bookmarksUrl = $"https://api.x.com/2/users/1620545947641188352/bookmarks";
+            var bookmarksUrl = $"https://api.x.com/2/users/1620545947641188352/bookmarks?max_results=100" +
+                              "&expansions=author_id,attachments.media_keys" +
+                              "&user.fields=id,username,name,profile_image_url" +
+                              "&media.fields=url,preview_image_url" +
+                              "&tweet.fields=author_id,attachments";
+            
             var response = await httpClient.GetAsync(bookmarksUrl);
             response.EnsureSuccessStatusCode();
 
